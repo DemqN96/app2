@@ -1,44 +1,38 @@
-name: Deploy dist to S3 (CLI)        # Назва workflow, відображається в GitHub Actions
+name: Deploy to S3
 
-on:                                  # Тригери, коли запускати workflow
-  push:                              # Запускається при пуші
-    branches: [ main ]               # Тільки коли пуш в гілку main
+on:
+  push:
+    branches:
+      - main 
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
 
-jobs:                                # Опис робіт (jobs)
-  deploy:                            # Назва job — "deploy"
-    runs-on: ubuntu-latest           # Використовує останню версію Ubuntu для виконання
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    env:                             # Глобальні змінні середовища для job
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}       # Твій AWS Access Key ID
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }} # Твій AWS Secret Key
-      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}               # Регіон, де знаходиться твій бакет
-      S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}                      # Назва бакету S3, куди будемо заливати
-
-    steps:                           # Послідовність кроків у job
-      - name: Checkout code          # Крок: завантаження коду з репозиторію
-        uses: actions/checkout@v4    # Використання готового GitHub Action для checkout
-
-      - name: Set up Node.js         # Крок: налаштування Node.js
-        uses: actions/setup-node@v4  # Використання GitHub Action для інсталяції Node.js
+      - name: Install Node.js
+        uses: actions/setup-node@v3
         with:
-          node-version: 18           # Версія Node.js — 18
+         node-version: '22'
 
-      - name: Install dependencies   # Крок: встановлення залежностей
-        run: npm ci                   # Встановлює залежності з package-lock.json
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Build Vite project     # Крок: збірка проєкту
-        run: npm run build            # Виконує білд, генерує папку dist/
+      - name: Deploy to S3
+        uses: aws-actions/s3-sync@v1
+        with:
+          args: --acl public-read --delete
+        env:
+          AWS_S3_BUCKET: ${{ secrets.AWS_S3_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }} 
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }} 
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          SOURCE_DIR: ./dist
 
-      - name: Install AWS CLI        # Крок: встановлення AWS CLI
-        run: pip install --user awscli && echo "$HOME/.local/bin" >> $GITHUB_PATH  
-        # pip install --user awscli — ставить AWS CLI для користувача
-        # echo "$HOME/.local/bin" >> $GITHUB_PATH — додає шлях до AWS CLI в PATH
-
-      - name: Check AWS CLI version  # Крок: перевірка версії AWS CLI
-        run: aws --version            # Виводить версію AWS CLI
-
-      - name: Upload dist to S3      # Крок: завантаження dist у S3
+      - name: Invalidate CloudFront cache
         run: |
-          aws s3 sync dist "s3://$S3_BUCKET" \
-            --delete \                # Видаляє з S3 файли, яких немає в dist
-            --only-show-errors        # Показує тільки помилки, приховуючи зайві логи
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.AWS_CF_DISTRIBUTION_ID }} \
+            --paths "/*"
